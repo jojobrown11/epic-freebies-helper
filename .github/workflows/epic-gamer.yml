@@ -1,3 +1,5 @@
+# 注：fork 仓库首次启用 Actions 时，GitHub 需要默认分支上出现工作流文件变更才会注册工作流。
+# 这一行仅为触发注册，不影响任何流程行为。
 name: Epic Awesome Gamer (Scheduled)
 
 on:
