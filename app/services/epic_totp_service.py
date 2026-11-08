@@ -347,6 +347,40 @@ async def _dump_totp_debug(page: Page, stage: str) -> None:
                        stage, type(err).__name__)
 
 
+
+async def _refill_totp_code(page: Page, code: str) -> bool:
+    """[fix2] hCaptcha 拖延 MFA 提交期间，用新窗口的码重填验证码框。"""
+    selector = "input[autocomplete='one-time-code']"
+    try:
+        locator = page.locator(selector)
+        count = await locator.count()
+        fields = []
+        for index in range(count):
+            field = locator.nth(index)
+            if await field.is_visible(timeout=250):
+                fields.append(field)
+            if len(fields) >= len(code):
+                break
+        if not fields:
+            return False
+        await _clear_totp_entry(page)
+        if len(fields) >= len(code):
+            fields = fields[: len(code)]
+            for field, digit in zip(fields, code):
+                with suppress(Exception):
+                    await field.click(timeout=800)
+                await field.press_sequentially(digit, delay=40, timeout=1500)
+        else:
+            field = fields[0]
+            with suppress(Exception):
+                await field.click(timeout=800)
+            await field.press_sequentially(code, delay=60, timeout=8000)
+        return True
+    except Exception as err:
+        logger.warning("[fix2] refill failed | error_type={}", type(err).__name__)
+        return False
+
+
 def _watch_mfa_responses(page: Page) -> None:
     """[diag] 记录 MFA 提交相关的全部网络响应（URL + 状态码）。"""
     def _on_response(r):
@@ -474,6 +508,26 @@ async def submit_totp_challenge(
                 with suppress(Exception):
                     await page.keyboard.press("Enter")
         logger.success("Submitted Epic authenticator 2FA code")
+        # [fix2] 实测（run 42465478411）：MFA POST 由 hCaptcha 完成触发，
+        # 距点击 71-303s，30s 的 TOTP 窗口早已过期 ->
+        # errors.com.epicgames.accountportal.mfa_code_invalid (expired)。
+        # 对策：captcha 求解期间每 25s 用当前窗口码刷新表单，POST 时刻
+        # 读到的码 <=25s 旧，不会过期。页面离开 MFA 即停。
+        refresh_deadline = time.monotonic() + 420
+        while time.monotonic() < refresh_deadline:
+            await page.wait_for_timeout(25000)
+            if "/id/login/mfa" not in page.url.lower():
+                logger.info("[fix2] left MFA page; stop refreshing | url={}",
+                            page.url[:120])
+                break
+            if not await _has_visible_totp_input(page, TOTP_INPUT_SELECTORS):
+                logger.info("[fix2] code boxes gone; stop refreshing")
+                break
+            fresh = await _current_totp_code(page)
+            if not fresh:
+                continue
+            if await _refill_totp_code(page, fresh):
+                logger.info("[fix2] TOTP code refreshed during captcha wait")
         await page.wait_for_timeout(8000)
         await _dump_totp_debug(page, "4_after_settle")
     return clicked
