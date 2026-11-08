@@ -78,6 +78,11 @@ class EpicSettings(AgentConfig):
         default_factory=lambda: _env("EPIC_COOKIES", ""),
         description="Playwright cookie JSON; cookie-based login bypasses password+MFA+captcha.",
     )
+    EPIC_EXTRA_SLUGS: str = Field(
+        default_factory=lambda: _env("EPIC_EXTRA_SLUGS", ""),
+        description="Comma-separated extra product slugs (or 'slug|title') to claim "
+                    "beyond the official freeGamesPromotions list (e.g. dev-run promos).",
+    )
     DISABLE_BEZIER_TRAJECTORY: bool = Field(default=False)
     RETRY_ON_FAILURE: bool = Field(
         default=False,
