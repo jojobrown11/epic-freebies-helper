@@ -300,6 +300,56 @@ async def _wait_for_totp_input(page: Page, timeout_ms: int = 20000) -> bool:
     return False
 
 
+
+async def _dump_totp_debug(page: Page, stage: str) -> None:
+    """[diag] 转储 2FA 页面现场：DOM 快照 + 选择器命中清单 + 全部可见 input 的属性与值。"""
+    try:
+        import json as _json
+
+        base = os.path.join("app", "volumes", "runtime", "totp_debug")
+        os.makedirs(base, exist_ok=True)
+        stamp = time.strftime("%H%M%S")
+        data = {"stage": stage, "url": page.url, "title": await page.title()}
+        census = []
+        for sel in TOTP_INPUT_SELECTORS + ("input[type='text']", "input[type='password']"):
+            loc = page.locator(sel)
+            try:
+                total = await loc.count()
+            except Exception:
+                total = -1
+            vis = []
+            for idx in range(min(max(total, 0), 24)):
+                el = loc.nth(idx)
+                try:
+                    if not await el.is_visible(timeout=200):
+                        continue
+                    vis.append(await el.evaluate(
+                        "e => ({name: e.name, id: e.id, type: e.type,"
+                        " inputmode: e.getAttribute('inputmode'),"
+                        " autocomplete: e.getAttribute('autocomplete'),"
+                        " maxlength: e.maxLength,"
+                        " arialabel: e.getAttribute('aria-label'),"
+                        " readonly: e.readOnly, disabled: e.disabled,"
+                        " value: e.value, cls: String(e.className).slice(0, 80),"
+                        " rect: (r => ({x: Math.round(r.x), y: Math.round(r.y),"
+                        " w: Math.round(r.width), h: Math.round(r.height)}))"
+                        "(e.getBoundingClientRect())})"))
+                except Exception:
+                    continue
+            census.append({"selector": sel, "count": total, "visible": vis})
+        data["census"] = census
+        with open(os.path.join(base, stamp + "_" + stage + ".json"), "w",
+                  encoding="utf-8") as f:
+            _json.dump(data, f, ensure_ascii=False, indent=2)
+        with open(os.path.join(base, stamp + "_" + stage + ".html"), "w",
+                  encoding="utf-8") as f:
+            f.write(await page.content())
+        logger.info("[diag] TOTP debug dump OK | stage={} | dir={}", stage, base)
+    except Exception as err:
+        logger.warning("[diag] TOTP debug dump failed | stage={} | error_type={}",
+                       stage, type(err).__name__)
+
+
 async def submit_totp_challenge(
     page: Page, *, force_next_code: bool = False, before_submit: Callable[[], None] | None = None
 ) -> bool:
@@ -310,6 +360,7 @@ async def submit_totp_challenge(
         logger.error("Could not find Epic authenticator 2FA code input after waiting")
         return False
 
+    await _dump_totp_debug(page, "1_before_fill")
     await _clear_totp_entry(page)
 
     code = await _current_totp_code(page, force_next_window=force_next_code)
@@ -344,6 +395,8 @@ async def submit_totp_challenge(
                 if not await _mask_totp_input(field):
                     continue
                 await field.fill(code, timeout=2000)
+            logger.info("[diag] TOTP fill OK | selector={} | visible_indexes={}",
+                        selector, indexes)
             filled = True
             break
         except Exception:
@@ -359,6 +412,8 @@ async def submit_totp_challenge(
     if not filled:
         logger.error("Could not find Epic authenticator 2FA code input")
         return False
+
+    await _dump_totp_debug(page, "2_after_fill")
 
     if before_submit:
         before_submit()
@@ -386,4 +441,5 @@ async def submit_totp_challenge(
     if clicked:
         logger.success("Submitted Epic authenticator 2FA code")
         await page.wait_for_timeout(1500)
+    await _dump_totp_debug(page, "3_after_click")
     return clicked
