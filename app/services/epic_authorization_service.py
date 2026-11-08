@@ -366,11 +366,13 @@ class EpicAuthorization:
     ) -> None:
         started_at = time.monotonic()
         deadline = started_at + timeout_seconds
-        hard_timeout_seconds = max(timeout_seconds, 180)
+        hard_timeout_seconds = max(timeout_seconds, 480)  # [fix3] MFA+captcha 长流程
         max_deadline = started_at + hard_timeout_seconds
         max_totp_attempts = 6
         max_invalid_totp_rejections = 10  # [fix2] expired 重试为预期行为
         captcha_totp_refresh_cooldown = 8.0
+
+        last_totp_submit_at = 0.0  # [fix3] 上次 TOTP 提交时刻
 
         def extend_deadline(reason: str, seconds: int = 120) -> None:
             nonlocal deadline
@@ -385,6 +387,7 @@ class EpicAuthorization:
                 )
 
         async def submit_fresh_totp(reason: str) -> None:
+            nonlocal last_totp_submit_at
             if not totp_login_enabled():
                 raise EpicAuthenticationFatalError(reason)
 
@@ -416,15 +419,16 @@ class EpicAuthorization:
                 force_next_code=force_next_code,
                 before_submit=self._drain_retryable_mfa_errors,
             ):
-                if not self._is_mfa_page():
-                    logger.warning(
-                        "MFA page disappeared before fresh TOTP could be submitted; "
-                        "continuing to observe login outcome | current_url='{}'",
-                        self.page.url,
-                    )
-                    extend_deadline("mfa-page-disappeared", 60)
-                    return
-                raise EpicAuthenticationFatalError(reason)
+                # [fix3] 点击后码框立即隐藏（验证中/captcha 覆盖），暂时无法
+                # 提交是常态；交给 outcome 循环稍后重试，不再 fatal。
+                logger.warning(
+                    "Fresh TOTP not submitted yet (captcha in flight or boxes hidden); "
+                    "deferring to outcome loop | current_url='{}'",
+                    self.page.url,
+                )
+                extend_deadline("totp-submit-deferred", 60)
+                return
+            last_totp_submit_at = time.monotonic()
             extend_deadline("totp-submit", 120)
 
         async def wait_for_mfa_captcha_settle(seconds: int = 8) -> bool:
@@ -565,8 +569,16 @@ class EpicAuthorization:
                 await self.page.wait_for_timeout(500)
                 continue
 
-            if self._is_mfa_page() and self._totp_attempts == 0:
-                await submit_fresh_totp("mfa_page")
+            # [fix3] MFA 页核心重试引擎：码框可见且冷却已过即填新码+点击，
+            # 每轮 POST 用的都是点击瞬间的新码；某轮 captcha 直通即成功。
+            if (
+                self._is_mfa_page()
+                and self._totp_attempts < max_totp_attempts
+                and time.monotonic() - last_totp_submit_at >= 20
+            ):
+                await submit_fresh_totp(
+                    "mfa_page" if self._totp_attempts == 0 else "mfa_page_retry"
+                )
                 continue
 
             if not self._is_mfa_page() and "/id/login" not in self.page.url:
