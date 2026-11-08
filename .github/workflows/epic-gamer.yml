@@ -3,9 +3,11 @@ name: Epic Awesome Gamer (Scheduled)
 on:
   workflow_dispatch: # 手动触发
   schedule:
-    # 每周四 UTC 15:20 运行一次（北京时间周四 23:20）
-    # 该时间点放在 Epic 周免刷新之后，避免过早触发。
-    - cron: '20 15 * * 4'
+    # Epic 周免换新的实测时刻是 UTC 16:00（北京时间周五 00:00）。
+    # 原值 15:20 比换新早 40 分钟，跑完拿到的是上一周的商品，故改为 16:25。
+    - cron: '25 16 * * 4'
+    # 备用：UTC 01:25 周五 = 北京周五 09:25，覆盖周四那次漏跑的情况。
+    - cron: '25 1 * * 5'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
