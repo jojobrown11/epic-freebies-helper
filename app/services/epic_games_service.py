@@ -154,7 +154,7 @@ def get_promotions() -> List[PromotionGame]:
             title = title.strip() or slug
             if not slug:
                 continue
-            url = URL_PRODUCT_PAGE.rstrip("/") + "/" + slug
+            url = URL_PRODUCT_PAGE.replace("en-US", "zh-CN").rstrip("/") + "/" + slug
             if url in seen:
                 continue
             seen.add(url)
@@ -2009,6 +2009,11 @@ class EpicGames:
                     # 再次检查是否在库中 (有时按钮不叫 purchase-cta，而是简单的 disabled button)
                     all_text = (await page.locator("body").text_content() or "").upper()
                     if any(marker in all_text for marker in owned_markers):
+                        hit = [m for m in owned_markers if m in all_text]
+                        logger.warning(
+                            f"[diag] page-scan markers={hit} snippet={all_text[:350]!r} "
+                            f"title='{game_title}'"
+                        )
                         logger.success(
                             "Game already claimed / already in library (page text scan) - "
                             f"title='{game_title}' url='{url}'"
