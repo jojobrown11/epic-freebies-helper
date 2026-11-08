@@ -300,56 +300,6 @@ async def _wait_for_totp_input(page: Page, timeout_ms: int = 20000) -> bool:
     return False
 
 
-
-async def _dump_totp_debug(page: Page, stage: str) -> None:
-    """[diag] 转储 2FA 页面现场：DOM 快照 + 选择器命中清单 + 全部可见 input 的属性与值。"""
-    try:
-        import json as _json
-
-        base = os.path.join("app", "volumes", "runtime", "totp_debug")
-        os.makedirs(base, exist_ok=True)
-        stamp = time.strftime("%H%M%S")
-        data = {"stage": stage, "url": page.url, "title": await page.title()}
-        census = []
-        for sel in TOTP_INPUT_SELECTORS + ("input[type='text']", "input[type='password']"):
-            loc = page.locator(sel)
-            try:
-                total = await loc.count()
-            except Exception:
-                total = -1
-            vis = []
-            for idx in range(min(max(total, 0), 24)):
-                el = loc.nth(idx)
-                try:
-                    if not await el.is_visible(timeout=200):
-                        continue
-                    vis.append(await el.evaluate(
-                        "e => ({name: e.name, id: e.id, type: e.type,"
-                        " inputmode: e.getAttribute('inputmode'),"
-                        " autocomplete: e.getAttribute('autocomplete'),"
-                        " maxlength: e.maxLength,"
-                        " arialabel: e.getAttribute('aria-label'),"
-                        " readonly: e.readOnly, disabled: e.disabled,"
-                        " value: e.value, cls: String(e.className).slice(0, 80),"
-                        " rect: (r => ({x: Math.round(r.x), y: Math.round(r.y),"
-                        " w: Math.round(r.width), h: Math.round(r.height)}))"
-                        "(e.getBoundingClientRect())})"))
-                except Exception:
-                    continue
-            census.append({"selector": sel, "count": total, "visible": vis})
-        data["census"] = census
-        with open(os.path.join(base, stamp + "_" + stage + ".json"), "w",
-                  encoding="utf-8") as f:
-            _json.dump(data, f, ensure_ascii=False, indent=2)
-        with open(os.path.join(base, stamp + "_" + stage + ".html"), "w",
-                  encoding="utf-8") as f:
-            f.write(await page.content())
-        logger.info("[diag] TOTP debug dump OK | stage={} | dir={}", stage, base)
-    except Exception as err:
-        logger.warning("[diag] TOTP debug dump failed | stage={} | error_type={}",
-                       stage, type(err).__name__)
-
-
 async def submit_totp_challenge(
     page: Page, *, force_next_code: bool = False, before_submit: Callable[[], None] | None = None
 ) -> bool:
@@ -360,7 +310,6 @@ async def submit_totp_challenge(
         logger.error("Could not find Epic authenticator 2FA code input after waiting")
         return False
 
-    await _dump_totp_debug(page, "1_before_fill")
     await _clear_totp_entry(page)
 
     code = await _current_totp_code(page, force_next_window=force_next_code)
@@ -387,16 +336,19 @@ async def submit_totp_challenge(
                 fields = [locator.nth(index) for index in indexes[: len(code)]]
                 if not all([await _mask_totp_input(field) for field in fields]):
                     continue
+                # [fix] Epic 的 MUI OTP 框是 React 受控组件：fill() 设置的 DOM
+                # 值会被重渲染丢弃（run 42460864345 快照证实），必须用真实键盘
+                # 事件驱动 onChange 更新 React state，Continue 才会解禁。
                 for field, digit in zip(fields, code):
-                    await field.fill(digit, timeout=1000)
+                    with suppress(Exception):
+                        await field.click(timeout=1000)
+                    await field.press_sequentially(digit, delay=60, timeout=2000)
             else:
                 field = locator.nth(indexes[0])
                 await expect(field).to_be_visible(timeout=2000)
                 if not await _mask_totp_input(field):
                     continue
-                await field.fill(code, timeout=2000)
-            logger.info("[diag] TOTP fill OK | selector={} | visible_indexes={}",
-                        selector, indexes)
+                await field.press_sequentially(code, delay=80, timeout=10000)
             filled = True
             break
         except Exception:
@@ -413,33 +365,43 @@ async def submit_totp_challenge(
         logger.error("Could not find Epic authenticator 2FA code input")
         return False
 
-    await _dump_totp_debug(page, "2_after_fill")
-
     if before_submit:
         before_submit()
 
-    clicked = False
-    for selector in (
-        "#continue",
-        "#sign-in",
-        "button[type='submit']",
-        "//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'continue')]",
-        "//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'verify')]",
-    ):
-        with suppress(Exception):
-            button = page.locator(selector).first
-            if await button.is_visible(timeout=1000):
-                await button.click(timeout=2000)
-                clicked = True
-                break
+    async def _click_continue() -> bool:
+        for selector in (
+            "#continue",
+            "#sign-in",
+            "button[type='submit']",
+            "//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'continue')]",
+            "//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'verify')]",
+        ):
+            with suppress(Exception):
+                button = page.locator(selector).first
+                if await button.is_visible(timeout=1000):
+                    await button.click(timeout=2000)
+                    return True
+        return False
 
+    clicked = await _click_continue()
     if not clicked:
         with suppress(Exception):
             await page.keyboard.press("Enter")
             clicked = True
 
     if clicked:
+        # [fix] 禁用的 Continue 会吞掉点击：提交后若验证码框仍可见则重试点击，
+        # 防止 React 状态未更新时静默失败。
+        for retry in range(2):
+            await page.wait_for_timeout(2500)
+            if not await _has_visible_totp_input(page, TOTP_INPUT_SELECTORS):
+                break
+            logger.warning(
+                "2FA form still visible after submit; retrying Continue | retry={}",
+                retry + 1,
+            )
+            if not await _click_continue():
+                with suppress(Exception):
+                    await page.keyboard.press("Enter")
         logger.success("Submitted Epic authenticator 2FA code")
-        await page.wait_for_timeout(1500)
-    await _dump_totp_debug(page, "3_after_click")
     return clicked
