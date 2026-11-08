@@ -833,6 +833,21 @@ class EpicAuthorization:
 
     async def invoke(self) -> bool:
         self.page.on("response", self._on_response_anything)
+        if settings.EPIC_COOKIES.strip():
+            # [cookie-login] 注入已登录会话，跳过密码+MFA+captcha 全链路；
+            # 失败则自然落入原密码流程。
+            try:
+                cookies = json.loads(settings.EPIC_COOKIES)
+                await self.page.context.add_cookies(cookies)
+                logger.info(
+                    "Injected {} Epic cookies from EPIC_COOKIES for cookie-based login",
+                    len(cookies),
+                )
+            except Exception as err:
+                logger.warning(
+                    "EPIC_COOKIES parse/add failed; falling back to password login | error_type={}",
+                    type(err).__name__,
+                )
         self._totp_attempts = 0
         self._invalid_totp_rejections = 0
         self._last_captcha_totp_refresh_at = 0.0
