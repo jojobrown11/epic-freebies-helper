@@ -454,7 +454,17 @@ class EpicAuthorization:
 
             return False
 
+        _last_beat_at = time.monotonic()
         while time.monotonic() < deadline:
+            if time.monotonic() - _last_beat_at >= 10:
+                _last_beat_at = time.monotonic()
+                logger.info(
+                    "[diag] outcome-wait | url='{}' | mfa_page={} | totp_attempts={} | "
+                    "err_q={} | ok_q={}",
+                    self.page.url[:140], self._is_mfa_page(), self._totp_attempts,
+                    self._login_error_signal.qsize(),
+                    self._is_login_success_signal.qsize(),
+                )
             if not self._login_error_signal.empty():
                 result = await self._login_error_signal.get()
                 error_code = result.get("errorCode", "unknown_error")
