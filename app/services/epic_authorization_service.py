@@ -369,7 +369,7 @@ class EpicAuthorization:
         hard_timeout_seconds = max(timeout_seconds, 180)
         max_deadline = started_at + hard_timeout_seconds
         max_totp_attempts = 6
-        max_invalid_totp_rejections = 3
+        max_invalid_totp_rejections = 10  # [fix2] expired 重试为预期行为
         captcha_totp_refresh_cooldown = 8.0
 
         def extend_deadline(reason: str, seconds: int = 120) -> None:
