@@ -76,6 +76,7 @@ jobs:
           EPIC_PASSWORD: ${{ secrets.EPIC_PASSWORD }}
           EPIC_ACCOUNTS: ${{ secrets.EPIC_ACCOUNTS }}
           EPIC_TOTP_SECRET: ${{ secrets.EPIC_TOTP_SECRET }}
+          EPIC_COOKIES: ${{ secrets.EPIC_COOKIES }}
           AUTH_MAX_ATTEMPTS: "3"  # 诊断期临时降低
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
