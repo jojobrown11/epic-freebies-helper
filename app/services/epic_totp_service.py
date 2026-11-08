@@ -508,26 +508,8 @@ async def submit_totp_challenge(
                 with suppress(Exception):
                     await page.keyboard.press("Enter")
         logger.success("Submitted Epic authenticator 2FA code")
-        # [fix2] 实测（run 42465478411）：MFA POST 由 hCaptcha 完成触发，
-        # 距点击 71-303s，30s 的 TOTP 窗口早已过期 ->
-        # errors.com.epicgames.accountportal.mfa_code_invalid (expired)。
-        # 对策：captcha 求解期间每 25s 用当前窗口码刷新表单，POST 时刻
-        # 读到的码 <=25s 旧，不会过期。页面离开 MFA 即停。
-        refresh_deadline = time.monotonic() + 420
-        while time.monotonic() < refresh_deadline:
-            await page.wait_for_timeout(25000)
-            if "/id/login/mfa" not in page.url.lower():
-                logger.info("[fix2] left MFA page; stop refreshing | url={}",
-                            page.url[:120])
-                break
-            if not await _has_visible_totp_input(page, TOTP_INPUT_SELECTORS):
-                logger.info("[fix2] code boxes gone; stop refreshing")
-                break
-            fresh = await _current_totp_code(page)
-            if not fresh:
-                continue
-            if await _refill_totp_code(page, fresh):
-                logger.info("[fix2] TOTP code refreshed during captcha wait")
-        await page.wait_for_timeout(8000)
+        # [fix3] 重试引擎已上收至 outcome 循环（码框可见即填新码+点击）；
+        # 此处点击后立即返回，避免阻塞 outcome 的状态机轮转。
+        await page.wait_for_timeout(2000)
         await _dump_totp_debug(page, "4_after_settle")
     return clicked
