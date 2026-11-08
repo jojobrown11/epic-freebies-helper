@@ -138,6 +138,36 @@ def get_promotions() -> List[PromotionGame]:
         logger.info(e["url"])
         promotions.append(PromotionGame(**e))
 
+    # 自定义领取目标：EPIC_EXTRA_SLUGS 逗号分隔 "slug" 或 "slug|标题"，
+    # 用于领官方 freeGamesPromotions 接口不收录的「开发商自发促销」
+    # （如 GMH - Good Morning Human 这类临时限免）。这类商品拿不到
+    # offerId/namespace，用占位符；领取走商品页点击，不依赖这两个字段。
+    extra_slugs = (settings.EPIC_EXTRA_SLUGS or "").strip()
+    if extra_slugs:
+        seen = {p.url for p in promotions}
+        for item in extra_slugs.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            slug, _, title = item.partition("|")
+            slug = slug.strip().strip("/")
+            title = title.strip() or slug
+            if not slug:
+                continue
+            url = URL_PRODUCT_PAGE.rstrip("/") + "/" + slug
+            if url in seen:
+                continue
+            seen.add(url)
+            promotions.append(PromotionGame(
+                title=title,
+                id="extra-" + slug,
+                namespace="",
+                description="",
+                offerType="DLC",
+                url=url,
+            ))
+            logger.info(f"Extra promotion from EPIC_EXTRA_SLUGS: {title} -> {url}")
+
     return promotions
 
 
