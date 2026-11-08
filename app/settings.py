@@ -74,6 +74,10 @@ class EpicSettings(AgentConfig):
     )
     EPIC_EMAIL: str = Field(default_factory=lambda: _env("EPIC_EMAIL", ""))
     EPIC_PASSWORD: SecretStr = Field(default_factory=lambda: _env("EPIC_PASSWORD", ""))
+    EPIC_COOKIES: str = Field(
+        default_factory=lambda: _env("EPIC_COOKIES", ""),
+        description="Playwright cookie JSON; cookie-based login bypasses password+MFA+captcha.",
+    )
     DISABLE_BEZIER_TRAJECTORY: bool = Field(default=False)
     RETRY_ON_FAILURE: bool = Field(
         default=False,
