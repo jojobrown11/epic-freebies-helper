@@ -55,7 +55,17 @@ jobs:
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: uv run camoufox fetch
+        run: |
+          for i in 1 2 3 4 5; do
+            if uv run camoufox fetch; then
+              echo "camoufox fetched on attempt $i"
+              exit 0
+            fi
+            echo "attempt $i failed (release download can 504); retrying in 15s"
+            sleep 15
+          done
+          echo "camoufox fetch failed after retries; runtime will fall back to playwright firefox"
+          exit 0
 
       - name: Install Playwright Firefox fallback
         run: uv run playwright install firefox
