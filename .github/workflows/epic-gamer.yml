@@ -23,20 +23,29 @@ permissions:
 jobs:
   precheck:
     runs-on: ubuntu-latest
-    # force=true 时跳过检测，直接把主 job 放行
-    if: |
-      github.repository != 'Ronchy2000/epic-freebies-helper' &&
-      inputs.force != true
+    # 注意：本 job 必须始终运行。若让它被 skip，下游 epic-gamer 会因 needs
+    # 未成功而被连带 skip（即使 if 为 true）。所以 force 走「内部直接放行」。
+    if: github.repository != 'Ronchy2000/epic-freebies-helper'
     outputs:
-      should_run: ${{ steps.diff.outputs.should_run }}
-      reason: ${{ steps.diff.outputs.reason }}
+      should_run: ${{ steps.forced.outputs.should_run || steps.diff.outputs.should_run }}
+      reason: ${{ steps.forced.outputs.reason || steps.diff.outputs.reason }}
     steps:
+      - name: Forced run (skip detection)
+        id: forced
+        if: inputs.force == true
+        run: |
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "reason=forced" >> "$GITHUB_OUTPUT"
+          echo "手动强制执行：跳过变更检测"
+
       - name: Checkout precheck script
+        if: inputs.force != true
         uses: actions/checkout@v6
         with:
           sparse-checkout: .github/scripts
 
       - name: Restore last promo signature
+        if: inputs.force != true
         uses: actions/cache/restore@v4
         with:
           path: .promo
@@ -45,10 +54,11 @@ jobs:
 
       - name: Detect free-game rotation
         id: diff
+        if: inputs.force != true
         run: python3 .github/scripts/precheck_promo.py
 
       - name: Save promo signature
-        if: steps.diff.outputs.should_run == 'true'
+        if: inputs.force != true && steps.diff.outputs.should_run == 'true'
         uses: actions/cache/save@v4
         with:
           path: .promo
@@ -69,7 +79,7 @@ jobs:
     # 且只有检测到免费阵容变化时才真正启动浏览器，避免空跑。
     if: |
       github.repository != 'Ronchy2000/epic-freebies-helper' &&
-      (inputs.force == true || needs.precheck.outputs.should_run == 'true')
+      needs.precheck.outputs.should_run == 'true'
 
     steps:
       - name: Checkout repository
