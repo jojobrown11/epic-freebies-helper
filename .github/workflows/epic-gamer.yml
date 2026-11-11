@@ -3,17 +3,51 @@ name: Epic Awesome Gamer (Scheduled)
 on:
   workflow_dispatch: # 手动触发
   schedule:
-    # Epic 周免换新的实测时刻是 UTC 16:00（北京时间周五 00:00）。
-    # 原值 15:20 比换新早 40 分钟，跑完拿到的是上一周的商品，故改为 16:25。
-    - cron: '25 16 * * 4'
-    # 备用：UTC 01:25 周五 = 北京周五 09:25，覆盖周四那次漏跑的情况。
-    - cron: '25 1 * * 5'
+    # 每 30 分钟做一次轻量检测：只读公开促销接口，几秒完成、不带任何凭据。
+    # 只有免费阵容真的变了（换新 / 延迟上架）才启动浏览器去领取。
+    # 未换新时不会创建浏览器容器，实际资源占用为 0。
+    - cron: '*/30 * * * *'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+permissions:
+  contents: read
+  models: read          # 调用 GitHub Models 做验证码识别所需
+
 jobs:
+  precheck:
+    runs-on: ubuntu-latest
+    if: github.repository != 'Ronchy2000/epic-freebies-helper'
+    outputs:
+      should_run: ${{ steps.diff.outputs.should_run }}
+      reason: ${{ steps.diff.outputs.reason }}
+    steps:
+      - name: Checkout precheck script
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Restore last promo signature
+        uses: actions/cache/restore@v4
+        with:
+          path: .promo
+          key: epic-promo-${{ github.run_id }}
+          restore-keys: epic-promo-
+
+      - name: Detect free-game rotation
+        id: diff
+        run: python3 .github/scripts/precheck_promo.py
+
+      - name: Save promo signature
+        if: steps.diff.outputs.should_run == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .promo
+          key: epic-promo-${{ github.run_id }}
+
   epic-gamer:
+    needs: precheck
     runs-on: ubuntu-latest
     # A single account run can take 15-20 minutes. Multi-account runs are
     # sequential, so scale the timeout with the number of accounts by setting
@@ -22,7 +56,10 @@ jobs:
     timeout-minutes: ${{ fromJSON(vars.JOB_TIMEOUT_MINUTES || '60') }}
 
     # 默认不在主仓库自身执行定时任务；Fork 后的仓库会正常运行。
-    if: github.repository != 'Ronchy2000/epic-freebies-helper'
+    # 且只有检测到免费阵容变化时才真正启动浏览器，避免空跑。
+    if: |
+      github.repository != 'Ronchy2000/epic-freebies-helper' &&
+      needs.precheck.outputs.should_run == 'true'
 
     steps:
       - name: Checkout repository
@@ -86,13 +123,19 @@ jobs:
           WXPUSH_USERID: ${{ secrets.WXPUSH_USERID }}
           WXPUSH_TEMPLATE_ID: ${{ secrets.WXPUSH_TEMPLATE_ID }}
           WXPUSH_BASE_URL: ${{ secrets.WXPUSH_BASE_URL }}
-          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || secrets.LLM_PROVIDER }}
+          # ── 识别模型：GitHub Models（OpenAI 兼容端点）────────────────────
+          # 零额外 key：直接用 Actions 自带的 GITHUB_TOKEN（需上方 models: read）。
+          # 代码侧把 GitHub Models 当作 "glm" 提供方使用，因为适配层就是标准
+          # OpenAI /chat/completions 调用，只换 base_url 与模型名即可。
+          # 回退智谱：把下面 GLM_API_KEY 改成 secrets.GLM_API_KEY，
+          # 并把 Variables 里的 GLM_BASE_URL / GLM_MODEL 改回智谱的值即可。
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'glm' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || secrets.GEMINI_MODEL }}
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          GLM_BASE_URL: ${{ secrets.GLM_BASE_URL }}
-          GLM_MODEL: ${{ vars.GLM_MODEL || secrets.GLM_MODEL }}
+          GLM_API_KEY: ${{ secrets.GITHUB_TOKEN }}
+          GLM_BASE_URL: ${{ vars.GLM_BASE_URL || 'https://models.github.ai/inference' }}
+          GLM_MODEL: ${{ vars.GLM_MODEL || 'openai/gpt-4o' }}
           CHALLENGE_CLASSIFIER_MODEL: ${{ vars.CHALLENGE_CLASSIFIER_MODEL || secrets.CHALLENGE_CLASSIFIER_MODEL }}
           IMAGE_CLASSIFIER_MODEL: ${{ vars.IMAGE_CLASSIFIER_MODEL || secrets.IMAGE_CLASSIFIER_MODEL }}
           SPATIAL_POINT_REASONER_MODEL: ${{ vars.SPATIAL_POINT_REASONER_MODEL || secrets.SPATIAL_POINT_REASONER_MODEL }}
