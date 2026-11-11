@@ -2,6 +2,11 @@ name: Epic Awesome Gamer (Scheduled)
 
 on:
   workflow_dispatch: # 手动触发
+    inputs:
+      force:
+        description: '跳过变更检测，强制执行一次（验证 / 补领用）'
+        type: boolean
+        default: false
   schedule:
     # 每 30 分钟做一次轻量检测：只读公开促销接口，几秒完成、不带任何凭据。
     # 只有免费阵容真的变了（换新 / 延迟上架）才启动浏览器去领取。
@@ -18,7 +23,10 @@ permissions:
 jobs:
   precheck:
     runs-on: ubuntu-latest
-    if: github.repository != 'Ronchy2000/epic-freebies-helper'
+    # force=true 时跳过检测，直接把主 job 放行
+    if: |
+      github.repository != 'Ronchy2000/epic-freebies-helper' &&
+      inputs.force != true
     outputs:
       should_run: ${{ steps.diff.outputs.should_run }}
       reason: ${{ steps.diff.outputs.reason }}
@@ -61,7 +69,7 @@ jobs:
     # 且只有检测到免费阵容变化时才真正启动浏览器，避免空跑。
     if: |
       github.repository != 'Ronchy2000/epic-freebies-helper' &&
-      needs.precheck.outputs.should_run == 'true'
+      (inputs.force == true || needs.precheck.outputs.should_run == 'true')
 
     steps:
       - name: Checkout repository
