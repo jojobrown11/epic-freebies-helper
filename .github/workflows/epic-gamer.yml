@@ -48,7 +48,9 @@ jobs:
 
   epic-gamer:
     needs: precheck
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已切到 26.04，Playwright 明确不支持
+    # "firefox on ubuntu26.04-x64"，会导致备用浏览器安装步骤直接失败。
+    runs-on: ubuntu-24.04
     # A single account run can take 15-20 minutes. Multi-account runs are
     # sequential, so scale the timeout with the number of accounts by setting
     # a repository variable JOB_TIMEOUT_MINUTES (Settings -> Secrets and
@@ -105,6 +107,8 @@ jobs:
           exit 0
 
       - name: Install Playwright Firefox fallback
+        # 仅作备用：Camoufox 已装好时不需要它，装不上也不应中断流程
+        continue-on-error: true
         run: uv run playwright install firefox
 
       - name: Run Epic Awesome Gamer
